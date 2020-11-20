@@ -1,0 +1,10 @@
+{
+    "redmi": {
+        "serial": "jfpn4pw4aenrqod6",
+        "logfileSuffix": "redmi-note8pro"
+    },
+    "moto": {
+        "serial": "NRMR410136",
+        "logfileSuffix": "motog7"
+    }
+}

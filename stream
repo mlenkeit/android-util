@@ -1,0 +1,12 @@
+#!/bin/bash
+
+device=$1
+serial=$(cat devices.json | jq ".$device.serial" -r)
+
+if [ $serial = "null" ]
+then
+    echo "Device '$device' not found in devices.json"
+    exit 1
+fi
+
+adb -s $serial logcat

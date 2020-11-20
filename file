@@ -1,0 +1,24 @@
+#!/bin/bash
+
+device=$1
+serial=$(cat devices.json | jq ".$device.serial" -r)
+logfileSuffix=$(cat devices.json | jq ".$device.logfileSuffix" -r)
+
+if [ $serial = "null" ]
+then
+    echo "Device '$device' not found in devices.json"
+    exit 1
+fi
+
+filenameWithoutExtension=logs/$(date +"%Y-%m-%d_%H-%M-%S")-$logfileSuffix
+logfile=$filenameWithoutExtension.txt
+archive=$filenameWithoutExtension.zip
+
+trap ctrl_c INT
+function ctrl_c() {
+    zip $filenameWithoutExtension $logfile
+    echo "Log stored in $logfile and zipped to $archive"
+}
+
+echo "Streaming logs to $logfile"
+adb -s $serial logcat > $logfile
