@@ -173,26 +173,15 @@ cmd_watch() {
         wait "$SCRCPY_PID" || exit_code=$?
         SCRCPY_PID=""
 
-        case $exit_code in
-            0)
-                log "scrcpy exited normally (user quit)"
-                exit 0
-                ;;
-            1)
-                log "scrcpy lost connection — resuming watch"
-                if ! is_device_connected "$DEVICE_SERIAL"; then
-                    sleep 5
-                fi
-                ;;
-            2)
-                log "error: scrcpy reported bad arguments"
-                exit 2
-                ;;
-            *)
-                log "scrcpy exited with code $exit_code — resuming watch"
-                sleep 5
-                ;;
-        esac
+        if [[ $exit_code -eq 0 ]]; then
+            log "scrcpy exited normally (user quit)"
+            exit 0
+        fi
+
+        log "scrcpy exited (code $exit_code) — resuming watch"
+        if ! is_device_connected "$DEVICE_SERIAL"; then
+            sleep 5
+        fi
     done
 }
 
