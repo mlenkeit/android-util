@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+DEVICES_FILE=".devices.json"
+SCRCPY_PID=""
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $*" >&2
+}
+
+check_deps() {
+    local missing=()
+    command -v adb >/dev/null || missing+=("adb (Android SDK platform-tools)")
+    command -v scrcpy >/dev/null || missing+=("scrcpy (https://github.com/Genymobile/scrcpy)")
+    command -v jq >/dev/null || missing+=("jq (https://jqlang.github.io/jq/)")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Missing required dependencies:" >&2
+        for dep in "${missing[@]}"; do
+            echo "  - $dep" >&2
+        done
+        exit 1
+    fi
+}
+
+cleanup() {
+    if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
+        kill "$SCRCPY_PID" 2>/dev/null
+        wait "$SCRCPY_PID" 2>/dev/null
+    fi
+    log "stopped"
+    exit 0
+}
