@@ -30,3 +30,50 @@ cleanup() {
     log "stopped"
     exit 0
 }
+
+# Sets DEVICE_SERIAL and optionally DEVICE_LOGFILE_SUFFIX from .devices.json or raw serial.
+# Usage: resolve_device <device_arg>
+# If device_arg is empty, DEVICE_SERIAL stays empty (caller decides if that's ok).
+resolve_device() {
+    local device_arg="${1:-}"
+    DEVICE_SERIAL=""
+    DEVICE_LOGFILE_SUFFIX=""
+
+    if [[ -z "$device_arg" ]]; then
+        return
+    fi
+
+    if [[ -f "$DEVICES_FILE" ]]; then
+        local serial
+        serial=$(jq -r --arg d "$device_arg" '.[$d].serial // empty' "$DEVICES_FILE")
+        if [[ -n "$serial" ]]; then
+            DEVICE_SERIAL="$serial"
+            DEVICE_LOGFILE_SUFFIX=$(jq -r --arg d "$device_arg" '.[$d].logfileSuffix // empty' "$DEVICES_FILE")
+            return
+        fi
+    fi
+
+    # Treat as raw serial
+    DEVICE_SERIAL="$device_arg"
+}
+
+# Returns scrcpy args string with 3-tier precedence:
+# per-device > defaults.scrcpyArgs > hardcoded -m 800
+get_scrcpy_args() {
+    local device_arg="${1:-}"
+    local args=""
+
+    if [[ -n "$device_arg" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        args=$(jq -r --arg d "$device_arg" '.[$d].scrcpyArgs // empty' "$DEVICES_FILE")
+    fi
+
+    if [[ -z "$args" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        args=$(jq -r '.defaults.scrcpyArgs // empty' "$DEVICES_FILE")
+    fi
+
+    if [[ -z "$args" ]]; then
+        args="-m 800"
+    fi
+
+    echo "$args"
+}
