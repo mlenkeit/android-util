@@ -33,12 +33,19 @@ vim .devices.json
 ```json
 {
     "defaults": {
-        "scrcpyArgs": "-m 800"
+        "scrcpyArgs": "-m 800",
+        "cleanPackages": [
+            "com.example.app"
+        ]
     },
     "redmi": {
         "serial": "jfpn4pw4aenrqod6",
         "logfileSuffix": "redmi-note8pro",
-        "scrcpyArgs": "-m 1200 --stay-awake"
+        "scrcpyArgs": "-m 1200 --stay-awake",
+        "cleanPackages": [
+            "com.example.app.dev",
+            "com.example.app.staging"
+        ]
     },
     "moto": {
         "serial": "NRMR410136",
@@ -48,6 +55,8 @@ vim .devices.json
 ```
 
 `scrcpyArgs` precedence: per-device > `defaults.scrcpyArgs` > hardcoded `-m 800`.
+
+`cleanPackages` precedence: per-device > `defaults.cleanPackages`.
 
 ## Usage
 
@@ -68,8 +77,12 @@ device log redmi          # alias
 # Stream logcat to file, zip on Ctrl+C
 device logs redmi --file
 
+# Uninstall configured packages
+device clean redmi
+device clean              # first connected device
+
 # Show help
 device --help
 ```
 
-`DEVICE` can be a nickname from `.devices.json` or a raw adb serial. Optional for `screen`/`watch` (defaults to first connected device), required for `logs`.
+`DEVICE` can be a nickname from `.devices.json` or a raw adb serial. Optional for `screen`/`watch`/`logs`/`clean` (defaults to first connected device).
