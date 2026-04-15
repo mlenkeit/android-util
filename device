@@ -97,3 +97,20 @@ cmd_init() {
 TEMPLATE
     echo "Created $DEVICES_FILE — edit it with your device serials"
 }
+
+cmd_screen() {
+    local device_arg="${1:-}"
+    check_deps
+    resolve_device "$device_arg"
+
+    local serial_args=()
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        serial_args=(-s "$DEVICE_SERIAL")
+    fi
+
+    local scrcpy_args
+    scrcpy_args=$(get_scrcpy_args "$device_arg")
+
+    # shellcheck disable=SC2086
+    exec scrcpy "${serial_args[@]+"${serial_args[@]}"}" $scrcpy_args
+}
