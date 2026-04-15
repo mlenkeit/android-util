@@ -207,6 +207,12 @@ cmd_logs() {
         first=$(adb devices 2>/dev/null | tail -n +2 | grep -w "device" | head -1 | cut -f1)
         if [[ -n "$first" ]]; then
             DEVICE_SERIAL="$first"
+            # Check if this serial belongs to a known device in .devices.json
+            if [[ -z "$DEVICE_LOGFILE_SUFFIX" ]] && [[ -f "$DEVICES_FILE" ]]; then
+                DEVICE_LOGFILE_SUFFIX=$(jq -r --arg s "$first" \
+                    'to_entries[] | select(.value.serial? == $s) | .value.logfileSuffix // empty' \
+                    "$DEVICES_FILE")
+            fi
         else
             echo "No device specified and none connected" >&2
             exit 1
@@ -215,8 +221,7 @@ cmd_logs() {
 
     if [[ "$to_file" == true ]]; then
         if [[ -z "$DEVICE_LOGFILE_SUFFIX" ]]; then
-            echo "Device '$device_arg' has no logfileSuffix in $DEVICES_FILE" >&2
-            exit 1
+            DEVICE_LOGFILE_SUFFIX="$DEVICE_SERIAL"
         fi
 
         mkdir -p logs
