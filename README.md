@@ -8,11 +8,21 @@ Unified CLI for Android device management — screen mirroring, logcat streaming
 - [scrcpy](https://github.com/Genymobile/scrcpy)
 - [jq](https://jqlang.github.io/jq/)
 
+## Install
+
+On macOS, symlink the script into your PATH:
+
+```bash
+ln -s "$(pwd)/device" ~/.local/bin/device
+```
+
+Then you can run `device` from any directory.
+
 ## Setup
 
 ```bash
 # Create a .devices.json config in your working directory
-./device init
+device init
 
 # Edit with your device serials (from `adb devices`)
 vim .devices.json
@@ -43,23 +53,23 @@ vim .devices.json
 
 ```bash
 # Mirror screen (one-shot)
-./device screen redmi
-./device scr redmi          # alias
+device screen redmi
+device scr redmi          # alias
 
 # Auto-launch scrcpy when device connects (daemon mode)
-./device watch redmi
-./device w redmi            # alias
-./device watch              # any device
+device watch redmi
+device w redmi            # alias
+device watch              # any device
 
 # Stream logcat to terminal
-./device logs redmi
-./device log redmi          # alias
+device logs redmi
+device log redmi          # alias
 
 # Stream logcat to file, zip on Ctrl+C
-./device logs redmi --file
+device logs redmi --file
 
 # Show help
-./device --help
+device --help
 ```
 
 `DEVICE` can be a nickname from `.devices.json` or a raw adb serial. Optional for `screen`/`watch` (defaults to first connected device), required for `logs`.
