@@ -114,3 +114,84 @@ cmd_screen() {
     # shellcheck disable=SC2086
     exec scrcpy "${serial_args[@]+"${serial_args[@]}"}" $scrcpy_args
 }
+
+is_device_connected() {
+    local serial="${1:-}"
+    if [[ -n "$serial" ]]; then
+        local state
+        state=$(adb -s "$serial" get-state 2>&1) || true
+        case "$state" in
+            device) return 0 ;;
+            unauthorized)
+                log "warning: device $serial is unauthorized — check USB debugging prompt"
+                return 1 ;;
+            offline)
+                log "warning: device $serial is offline"
+                return 1 ;;
+            *) return 1 ;;
+        esac
+    else
+        # Any-device mode: check if at least one device is connected
+        local devices
+        devices=$(adb devices 2>/dev/null | tail -n +2 | grep -w "device" | head -1 | cut -f1)
+        if [[ -n "$devices" ]]; then
+            DEVICE_SERIAL="$devices"
+            return 0
+        fi
+        return 1
+    fi
+}
+
+cmd_watch() {
+    local device_arg="${1:-}"
+    check_deps
+    resolve_device "$device_arg"
+
+    trap cleanup INT TERM
+
+    local scrcpy_args
+    scrcpy_args=$(get_scrcpy_args "$device_arg")
+
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        log "watching for device $DEVICE_SERIAL"
+    else
+        log "watching for any device"
+    fi
+
+    while true; do
+        if ! is_device_connected "$DEVICE_SERIAL"; then
+            sleep 2
+            continue
+        fi
+
+        log "device $DEVICE_SERIAL connected — launching scrcpy"
+
+        local exit_code=0
+        # shellcheck disable=SC2086
+        scrcpy -s "$DEVICE_SERIAL" $scrcpy_args &
+        SCRCPY_PID=$!
+        wait "$SCRCPY_PID" || exit_code=$?
+        SCRCPY_PID=""
+
+        case $exit_code in
+            0)
+                log "scrcpy exited normally (user quit)"
+                exit 0
+                ;;
+            1)
+                log "scrcpy lost connection — resuming watch"
+                if ! is_device_connected "$DEVICE_SERIAL"; then
+                    sleep 5
+                fi
+                ;;
+            2)
+                log "error: scrcpy reported bad arguments"
+                exit 2
+                ;;
+            *)
+                log "scrcpy exited with code $exit_code — resuming watch"
+                sleep 5
+                ;;
+        esac
+    done
+}
