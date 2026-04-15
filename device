@@ -1,0 +1,269 @@
+#!/bin/bash
+set -euo pipefail
+
+DEVICES_FILE=".devices.json"
+SCRCPY_PID=""
+
+log() {
+    echo "[$(date '+%H:%M:%S')] $*" >&2
+}
+
+check_deps() {
+    local missing=()
+    command -v adb >/dev/null || missing+=("adb (Android SDK platform-tools)")
+    command -v scrcpy >/dev/null || missing+=("scrcpy (https://github.com/Genymobile/scrcpy)")
+    command -v jq >/dev/null || missing+=("jq (https://jqlang.github.io/jq/)")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        echo "Missing required dependencies:" >&2
+        for dep in "${missing[@]}"; do
+            echo "  - $dep" >&2
+        done
+        exit 1
+    fi
+}
+
+cleanup() {
+    if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
+        kill "$SCRCPY_PID" 2>/dev/null
+        wait "$SCRCPY_PID" 2>/dev/null
+    fi
+    log "stopped"
+    exit 0
+}
+
+# Sets DEVICE_SERIAL and optionally DEVICE_LOGFILE_SUFFIX from .devices.json or raw serial.
+# Usage: resolve_device <device_arg>
+# If device_arg is empty, DEVICE_SERIAL stays empty (caller decides if that's ok).
+resolve_device() {
+    local device_arg="${1:-}"
+    DEVICE_SERIAL=""
+    DEVICE_LOGFILE_SUFFIX=""
+
+    if [[ -z "$device_arg" ]]; then
+        return
+    fi
+
+    if [[ -f "$DEVICES_FILE" ]]; then
+        local serial
+        serial=$(jq -r --arg d "$device_arg" '.[$d].serial // empty' "$DEVICES_FILE")
+        if [[ -n "$serial" ]]; then
+            DEVICE_SERIAL="$serial"
+            DEVICE_LOGFILE_SUFFIX=$(jq -r --arg d "$device_arg" '.[$d].logfileSuffix // empty' "$DEVICES_FILE")
+            return
+        fi
+    fi
+
+    # Treat as raw serial
+    DEVICE_SERIAL="$device_arg"
+}
+
+# Returns scrcpy args string with 3-tier precedence:
+# per-device > defaults.scrcpyArgs > hardcoded -m 800
+get_scrcpy_args() {
+    local device_arg="${1:-}"
+    local args=""
+
+    if [[ -n "$device_arg" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        args=$(jq -r --arg d "$device_arg" '.[$d].scrcpyArgs // empty' "$DEVICES_FILE")
+    fi
+
+    if [[ -z "$args" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        args=$(jq -r '.defaults.scrcpyArgs // empty' "$DEVICES_FILE")
+    fi
+
+    if [[ -z "$args" ]]; then
+        args="-m 800"
+    fi
+
+    echo "$args"
+}
+
+cmd_init() {
+    if [[ -f "$DEVICES_FILE" ]]; then
+        echo "$DEVICES_FILE already exists in this directory" >&2
+        exit 1
+    fi
+    cat > "$DEVICES_FILE" <<'TEMPLATE'
+{
+    "defaults": {
+        "scrcpyArgs": "-m 800"
+    },
+    "mydevice": {
+        "serial": "SERIAL_FROM_ADB_DEVICES",
+        "logfileSuffix": "mydevice",
+        "scrcpyArgs": "-m 1200 --stay-awake"
+    }
+}
+TEMPLATE
+    echo "Created $DEVICES_FILE — edit it with your device serials"
+}
+
+cmd_screen() {
+    local device_arg="${1:-}"
+    check_deps
+    resolve_device "$device_arg"
+
+    local serial_args=()
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        serial_args=(-s "$DEVICE_SERIAL")
+    fi
+
+    local scrcpy_args
+    scrcpy_args=$(get_scrcpy_args "$device_arg")
+
+    # shellcheck disable=SC2086
+    exec scrcpy "${serial_args[@]+"${serial_args[@]}"}" $scrcpy_args
+}
+
+is_device_connected() {
+    local serial="${1:-}"
+    if [[ -n "$serial" ]]; then
+        local state
+        state=$(adb -s "$serial" get-state 2>&1) || true
+        case "$state" in
+            device) return 0 ;;
+            unauthorized)
+                log "warning: device $serial is unauthorized — check USB debugging prompt"
+                return 1 ;;
+            offline)
+                log "warning: device $serial is offline"
+                return 1 ;;
+            *) return 1 ;;
+        esac
+    else
+        # Any-device mode: check if at least one device is connected
+        local devices
+        devices=$(adb devices 2>/dev/null | tail -n +2 | grep -w "device" | head -1 | cut -f1)
+        if [[ -n "$devices" ]]; then
+            DEVICE_SERIAL="$devices"
+            return 0
+        fi
+        return 1
+    fi
+}
+
+cmd_watch() {
+    local device_arg="${1:-}"
+    check_deps
+    resolve_device "$device_arg"
+
+    trap cleanup INT TERM
+
+    local scrcpy_args
+    scrcpy_args=$(get_scrcpy_args "$device_arg")
+
+    if [[ -n "$DEVICE_SERIAL" ]]; then
+        log "watching for device $DEVICE_SERIAL"
+    else
+        log "watching for any device"
+    fi
+
+    while true; do
+        if ! is_device_connected "$DEVICE_SERIAL"; then
+            sleep 2
+            continue
+        fi
+
+        log "device $DEVICE_SERIAL connected — launching scrcpy"
+
+        local exit_code=0
+        # shellcheck disable=SC2086
+        scrcpy -s "$DEVICE_SERIAL" $scrcpy_args &
+        SCRCPY_PID=$!
+        wait "$SCRCPY_PID" || exit_code=$?
+        SCRCPY_PID=""
+
+        if [[ $exit_code -eq 0 ]]; then
+            log "scrcpy exited normally (user quit)"
+            exit 0
+        fi
+
+        log "scrcpy exited (code $exit_code) — resuming watch"
+        if ! is_device_connected "$DEVICE_SERIAL"; then
+            sleep 5
+        fi
+    done
+}
+
+cmd_logs() {
+    local device_arg=""
+    local to_file=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --file) to_file=true ;;
+            -*) echo "Unknown option: $1" >&2; exit 1 ;;
+            *) device_arg="$1" ;;
+        esac
+        shift
+    done
+
+    check_deps
+    resolve_device "$device_arg"
+
+    if [[ -z "$DEVICE_SERIAL" ]]; then
+        # No device arg given or not in config — try first connected device
+        local first
+        first=$(adb devices 2>/dev/null | tail -n +2 | grep -w "device" | head -1 | cut -f1)
+        if [[ -n "$first" ]]; then
+            DEVICE_SERIAL="$first"
+            # Check if this serial belongs to a known device in .devices.json
+            if [[ -z "$DEVICE_LOGFILE_SUFFIX" ]] && [[ -f "$DEVICES_FILE" ]]; then
+                DEVICE_LOGFILE_SUFFIX=$(jq -r --arg s "$first" \
+                    'to_entries[] | select(.value.serial? == $s) | .value.logfileSuffix // empty' \
+                    "$DEVICES_FILE")
+            fi
+        else
+            echo "No device specified and none connected" >&2
+            exit 1
+        fi
+    fi
+
+    if [[ "$to_file" == true ]]; then
+        if [[ -z "$DEVICE_LOGFILE_SUFFIX" ]]; then
+            DEVICE_LOGFILE_SUFFIX="$DEVICE_SERIAL"
+        fi
+
+        mkdir -p logs
+        local base="logs/$(date +"%Y-%m-%d_%H-%M-%S")-$DEVICE_LOGFILE_SUFFIX"
+        local logfile="$base.txt"
+        local archive="$base.zip"
+
+        trap 'zip "$base" "$logfile"; echo "Log stored in $logfile and zipped to $archive"' INT
+        echo "Streaming logs to $logfile"
+        adb -s "$DEVICE_SERIAL" logcat > "$logfile"
+    else
+        adb -s "$DEVICE_SERIAL" logcat
+    fi
+}
+
+usage() {
+    cat <<'EOF'
+Usage: device <command> [options]
+
+Commands:
+  screen [DEVICE]         Launch scrcpy once (alias: scr)
+  watch  [DEVICE]         Auto-launch scrcpy on device connect (alias: w)
+  logs   [DEVICE] [--file]  Stream logcat to terminal or file (alias: log)
+  init                    Create .devices.json template in current directory
+
+DEVICE is a nickname from .devices.json or a raw adb serial.
+Optional for screen/watch/logs (defaults to first connected device).
+EOF
+}
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+    screen|scr)   cmd_screen "$@" ;;
+    watch|w)      cmd_watch "$@" ;;
+    logs|log)     cmd_logs "$@" ;;
+    init)         cmd_init ;;
+    --help|-h|"") usage ;;
+    *)
+        echo "Unknown command: $cmd" >&2
+        usage >&2
+        exit 1
+        ;;
+esac
