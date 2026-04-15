@@ -77,3 +77,23 @@ get_scrcpy_args() {
 
     echo "$args"
 }
+
+cmd_init() {
+    if [[ -f "$DEVICES_FILE" ]]; then
+        echo "$DEVICES_FILE already exists in this directory" >&2
+        exit 1
+    fi
+    cat > "$DEVICES_FILE" <<'TEMPLATE'
+{
+    "defaults": {
+        "scrcpyArgs": "-m 800"
+    },
+    "mydevice": {
+        "serial": "SERIAL_FROM_ADB_DEVICES",
+        "logfileSuffix": "mydevice",
+        "scrcpyArgs": "-m 1200 --stay-awake"
+    }
+}
+TEMPLATE
+    echo "Created $DEVICES_FILE — edit it with your device serials"
+}
