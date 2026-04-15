@@ -195,3 +195,48 @@ cmd_watch() {
         esac
     done
 }
+
+cmd_logs() {
+    local device_arg="${1:-}"
+    local to_file=false
+
+    if [[ -z "$device_arg" ]]; then
+        echo "Usage: device logs DEVICE [--file]" >&2
+        exit 1
+    fi
+
+    shift || true
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --file) to_file=true ;;
+            *) echo "Unknown option: $1" >&2; exit 1 ;;
+        esac
+        shift
+    done
+
+    check_deps
+    resolve_device "$device_arg"
+
+    if [[ -z "$DEVICE_SERIAL" ]]; then
+        echo "Device '$device_arg' not found in $DEVICES_FILE" >&2
+        exit 1
+    fi
+
+    if [[ "$to_file" == true ]]; then
+        if [[ -z "$DEVICE_LOGFILE_SUFFIX" ]]; then
+            echo "Device '$device_arg' has no logfileSuffix in $DEVICES_FILE" >&2
+            exit 1
+        fi
+
+        mkdir -p logs
+        local base="logs/$(date +"%Y-%m-%d_%H-%M-%S")-$DEVICE_LOGFILE_SUFFIX"
+        local logfile="$base.txt"
+        local archive="$base.zip"
+
+        trap 'zip "$base" "$logfile"; echo "Log stored in $logfile and zipped to $archive"' INT
+        echo "Streaming logs to $logfile"
+        adb -s "$DEVICE_SERIAL" logcat > "$logfile"
+    else
+        adb -s "$DEVICE_SERIAL" logcat
+    fi
+}
