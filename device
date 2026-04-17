@@ -78,6 +78,28 @@ get_scrcpy_args() {
     echo "$args"
 }
 
+# Returns newline-separated clean packages with 2-tier precedence:
+# per-device > defaults.cleanPackages
+# Returns empty string if no packages configured.
+get_clean_packages() {
+    local device_arg="${1:-}"
+    local packages=""
+
+    if [[ -n "$device_arg" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        packages=$(jq -r --arg d "$device_arg" \
+            'if .[$d].cleanPackages then .[$d].cleanPackages[] else empty end' \
+            "$DEVICES_FILE")
+    fi
+
+    if [[ -z "$packages" ]] && [[ -f "$DEVICES_FILE" ]]; then
+        packages=$(jq -r \
+            'if .defaults.cleanPackages then .defaults.cleanPackages[] else empty end' \
+            "$DEVICES_FILE")
+    fi
+
+    echo "$packages"
+}
+
 cmd_init() {
     if [[ -f "$DEVICES_FILE" ]]; then
         echo "$DEVICES_FILE already exists in this directory" >&2
@@ -86,12 +108,19 @@ cmd_init() {
     cat > "$DEVICES_FILE" <<'TEMPLATE'
 {
     "defaults": {
-        "scrcpyArgs": "-m 800"
+        "scrcpyArgs": "-m 800",
+        "cleanPackages": [
+            "com.example.app"
+        ]
     },
     "mydevice": {
         "serial": "SERIAL_FROM_ADB_DEVICES",
         "logfileSuffix": "mydevice",
-        "scrcpyArgs": "-m 1200 --stay-awake"
+        "scrcpyArgs": "-m 1200 --stay-awake",
+        "cleanPackages": [
+            "com.example.app.dev",
+            "com.example.app.staging"
+        ]
     }
 }
 TEMPLATE
@@ -237,18 +266,71 @@ cmd_logs() {
     fi
 }
 
+cmd_clean() {
+    local device_arg="${1:-}"
+    check_deps
+    resolve_device "$device_arg"
+
+    if [[ -z "$DEVICE_SERIAL" ]]; then
+        local first
+        first=$(adb devices 2>/dev/null | tail -n +2 | grep -w "device" | head -1 | cut -f1)
+        if [[ -n "$first" ]]; then
+            DEVICE_SERIAL="$first"
+        else
+            echo "No device specified and none connected" >&2
+            exit 1
+        fi
+    fi
+
+    local packages_str
+    packages_str=$(get_clean_packages "$device_arg")
+
+    if [[ -z "$packages_str" ]]; then
+        echo "No cleanPackages configured in $DEVICES_FILE" >&2
+        exit 1
+    fi
+
+    local packages=()
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] && packages+=("$pkg")
+    done <<< "$packages_str"
+
+    log "uninstalling ${#packages[@]} packages from $DEVICE_SERIAL"
+
+    local success=0 skipped=0 failed=0
+
+    for package in "${packages[@]}"; do
+        local output
+        output=$(adb -s "$DEVICE_SERIAL" uninstall "$package" 2>&1) || true
+
+        if [[ "$output" == "Success" ]]; then
+            log "  uninstalled $package"
+            : $((success += 1))
+        elif echo "$output" | grep -qi "not installed\|unknown package"; then
+            log "  $package not installed, skipping"
+            : $((skipped += 1))
+        else
+            log "  failed to uninstall $package: $output"
+            : $((failed += 1))
+        fi
+    done
+
+    log "done: $success uninstalled, $skipped skipped, $failed failed"
+}
+
 usage() {
     cat <<'EOF'
 Usage: device <command> [options]
 
 Commands:
-  screen [DEVICE]         Launch scrcpy once (alias: scr)
-  watch  [DEVICE]         Auto-launch scrcpy on device connect (alias: w)
+  screen [DEVICE]           Launch scrcpy once (alias: scr)
+  watch  [DEVICE]           Auto-launch scrcpy on device connect (alias: w)
   logs   [DEVICE] [--file]  Stream logcat to terminal or file (alias: log)
-  init                    Create .devices.json template in current directory
+  clean  [DEVICE]           Uninstall configured packages from device
+  init                      Create .devices.json template in current directory
 
 DEVICE is a nickname from .devices.json or a raw adb serial.
-Optional for screen/watch/logs (defaults to first connected device).
+Optional for screen/watch/logs/clean (defaults to first connected device).
 EOF
 }
 
@@ -259,6 +341,7 @@ case "$cmd" in
     screen|scr)   cmd_screen "$@" ;;
     watch|w)      cmd_watch "$@" ;;
     logs|log)     cmd_logs "$@" ;;
+    clean)        cmd_clean "$@" ;;
     init)         cmd_init ;;
     --help|-h|"") usage ;;
     *)

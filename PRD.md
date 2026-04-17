@@ -38,7 +38,9 @@ Devices are configured in a `.devices.json` file in the current working director
 | `serial` | Yes | Device serial as shown by `adb devices` |
 | `logfileSuffix` | No | Human-readable suffix for log filenames (e.g. `redmi-note8pro`) |
 | `scrcpyArgs` | No | Per-device scrcpy arguments (overrides defaults) |
+| `cleanPackages` | No | Array of package IDs to uninstall with `device clean` (overrides defaults) |
 | `defaults.scrcpyArgs` | No | Fallback scrcpy arguments for all devices |
+| `defaults.cleanPackages` | No | Fallback package list for `device clean` |
 
 ### `device init`
 
@@ -95,12 +97,28 @@ Streams logcat output from the resolved device.
 - On Ctrl+C, zips the log file and prints the paths
 - The `<suffix>` is resolved as: `logfileSuffix` from config > device serial number
 
+### `device clean [DEVICE]`
+
+Uninstalls a configured list of packages from the resolved device.
+
+**Package list precedence:**
+1. Per-device `cleanPackages` from `.devices.json`
+2. `defaults.cleanPackages` from `.devices.json`
+3. Error if no packages configured
+
+**Behavior:**
+- Runs `adb -s <serial> uninstall <package>` for each configured package
+- Continues on failure (some packages may not be installed)
+- Logs each uninstall result: success, not installed (skipped), or error
+- Prints summary with counts of successful uninstalls, skipped, and failed
+
 ## CLI Reference
 
 ```
 device screen [DEVICE]          Launch scrcpy once (alias: scr)
 device watch  [DEVICE]          Auto-launch scrcpy on device connect (alias: w)
 device logs   [DEVICE] [--file] Stream logcat to terminal or file (alias: log)
+device clean  [DEVICE]          Uninstall configured packages from device
 device init                     Create .devices.json template in current directory
 device --help                   Show usage information
 ```
