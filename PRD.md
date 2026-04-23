@@ -84,6 +84,20 @@ Daemon mode — polls for a device connection and auto-launches scrcpy when the 
 - With a known serial: uses `adb -s <serial> get-state` for a targeted check
 - Without a serial (any-device mode): parses `adb devices` output and picks the first connected device
 
+**Recording:**
+
+While `device watch` is running, pressing `r` or `R` in the terminal toggles screen recording:
+
+- **Start recording:** kills the current scrcpy and relaunches with `--record=recordings/<timestamp>-<suffix>.mkv`
+- **Stop recording:** kills scrcpy (finalizing the MKV file) and relaunches without `--record`
+- Recordings are saved to a `recordings/` directory in the working directory, auto-created on first recording
+- Filename format: `<YYYY-MM-DD_HH-MM-SS>-<suffix>.mkv` where `<suffix>` is `logfileSuffix` from config or the device serial
+- MKV format is used for crash resilience — partial recordings remain playable if the device disconnects
+- Recording state resets on device disconnect; user must press `r` again after reconnect
+- On Ctrl+C during recording, the MKV file is finalized before exit
+- Recording is refused if scrcpy args contain `--no-video` or `--v4l2-sink` (incompatible flags)
+- Uses SIGINT (not SIGTERM) to stop scrcpy, as SIGINT is required for proper recording finalization
+
 ### `device logs [DEVICE] [--file]` (alias: `log`)
 
 Streams logcat output from the resolved device.

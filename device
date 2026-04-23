@@ -423,7 +423,7 @@ Usage: device <command> [options]
 
 Commands:
   screen [DEVICE]           Launch scrcpy once (alias: scr)
-  watch  [DEVICE]           Auto-launch scrcpy on device connect (alias: w)
+  watch  [DEVICE]           Auto-launch scrcpy on device connect; press [r] to record (alias: w)
   logs   [DEVICE] [--file]  Stream logcat to terminal or file (alias: log)
   clean  [DEVICE]           Uninstall configured packages from device
   init                      Create .devices.json template in current directory
