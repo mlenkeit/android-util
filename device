@@ -257,14 +257,23 @@ cmd_watch() {
                 while read -t 0.1 -n 1 2>/dev/null; do :; done
 
                 if [[ "$RECORDING" == false ]]; then
-                    log "restarting scrcpy for recording..."
-                    stop_scrcpy
-                    sleep 1
-                    mkdir -p recordings
-                    RECORDING_FILE="recordings/$(date +"%Y-%m-%d_%H-%M-%S")-$(get_recording_suffix).mkv"
-                    RECORDING=true
-                    launch_scrcpy "$scrcpy_args"
-                    log "REC recording started: $RECORDING_FILE"
+                    local conflict=""
+                    case "$scrcpy_args" in
+                        *--no-video*) conflict="--no-video" ;;
+                        *--v4l2-sink*) conflict="--v4l2-sink" ;;
+                    esac
+                    if [[ -n "$conflict" ]]; then
+                        log "REC cannot record: scrcpy args contain $conflict"
+                    else
+                        log "restarting scrcpy for recording..."
+                        stop_scrcpy
+                        sleep 1
+                        mkdir -p recordings
+                        RECORDING_FILE="recordings/$(date +"%Y-%m-%d_%H-%M-%S")-$(get_recording_suffix).mkv"
+                        RECORDING=true
+                        launch_scrcpy "$scrcpy_args"
+                        log "REC recording started: $RECORDING_FILE"
+                    fi
                 else
                     log "restarting scrcpy..."
                     local stopped_file="$RECORDING_FILE"
