@@ -16,6 +16,7 @@ check_deps() {
     command -v adb >/dev/null || missing+=("adb (Android SDK platform-tools)")
     command -v scrcpy >/dev/null || missing+=("scrcpy (https://github.com/Genymobile/scrcpy)")
     command -v jq >/dev/null || missing+=("jq (https://jqlang.github.io/jq/)")
+    command -v ffmpeg >/dev/null || missing+=("ffmpeg (https://ffmpeg.org/)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Missing required dependencies:" >&2
         for dep in "${missing[@]}"; do
@@ -207,6 +208,17 @@ stop_scrcpy() {
     SCRCPY_PID=""
 }
 
+convert_to_mp4() {
+    local mkv_file="$1"
+    local mp4_file="${mkv_file%.mkv}.mp4"
+    log "converting to MP4: $mp4_file"
+    if ffmpeg -y -i "$mkv_file" -c copy "$mp4_file" 2>/dev/null; then
+        log "MP4 ready: $mp4_file"
+    else
+        log "MP4 conversion failed for $mkv_file"
+    fi
+}
+
 cmd_watch() {
     local device_arg="${1:-}"
     check_deps
@@ -283,6 +295,7 @@ cmd_watch() {
                     RECORDING_FILE=""
                     launch_scrcpy "$scrcpy_args"
                     log "REC recording stopped: $stopped_file"
+                    convert_to_mp4 "$stopped_file"
                 fi
             fi
             key=""
