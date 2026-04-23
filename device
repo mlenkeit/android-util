@@ -177,6 +177,33 @@ is_device_connected() {
     fi
 }
 
+get_recording_suffix() {
+    if [[ -n "$DEVICE_LOGFILE_SUFFIX" ]]; then
+        echo "$DEVICE_LOGFILE_SUFFIX"
+    else
+        echo "$DEVICE_SERIAL"
+    fi
+}
+
+launch_scrcpy() {
+    local scrcpy_args="$1"
+    local record_args=""
+    if [[ "$RECORDING" == true ]]; then
+        record_args="--record=$RECORDING_FILE"
+    fi
+    # shellcheck disable=SC2086
+    scrcpy -s "$DEVICE_SERIAL" $scrcpy_args $record_args &
+    SCRCPY_PID=$!
+}
+
+stop_scrcpy() {
+    if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
+        kill -INT "$SCRCPY_PID" 2>/dev/null
+        wait "$SCRCPY_PID" 2>/dev/null
+    fi
+    SCRCPY_PID=""
+}
+
 cmd_watch() {
     local device_arg="${1:-}"
     check_deps
@@ -208,18 +235,44 @@ cmd_watch() {
             continue
         fi
 
-        log "device $DEVICE_SERIAL connected — launching scrcpy"
+        if [[ "$RECORDING" == true ]]; then
+            log "device $DEVICE_SERIAL connected — launching scrcpy [REC: $RECORDING_FILE]"
+        else
+            log "device $DEVICE_SERIAL connected — launching scrcpy"
+        fi
         log "press [r] to start/stop recording"
 
         local exit_code=0
-        # shellcheck disable=SC2086
-        scrcpy -s "$DEVICE_SERIAL" $scrcpy_args &
-        SCRCPY_PID=$!
+        launch_scrcpy "$scrcpy_args"
 
         while kill -0 "$SCRCPY_PID" 2>/dev/null; do
             stty -echo 2>/dev/null
             read -t 1 -n 1 key 2>/dev/null || true
             stty "$OLD_STTY" 2>/dev/null
+
+            if [[ "$key" == "r" ]] || [[ "$key" == "R" ]]; then
+                while read -t 0.1 -n 1 2>/dev/null; do :; done
+
+                if [[ "$RECORDING" == false ]]; then
+                    log "restarting scrcpy for recording..."
+                    stop_scrcpy
+                    sleep 1
+                    mkdir -p recordings
+                    RECORDING_FILE="recordings/$(date +"%Y-%m-%d_%H-%M-%S")-$(get_recording_suffix).mkv"
+                    RECORDING=true
+                    launch_scrcpy "$scrcpy_args"
+                    log "REC recording started: $RECORDING_FILE"
+                else
+                    log "restarting scrcpy..."
+                    local stopped_file="$RECORDING_FILE"
+                    stop_scrcpy
+                    sleep 1
+                    RECORDING=false
+                    RECORDING_FILE=""
+                    launch_scrcpy "$scrcpy_args"
+                    log "REC recording stopped: $stopped_file"
+                fi
+            fi
             key=""
         done
         wait "$SCRCPY_PID" 2>/dev/null || exit_code=$?
@@ -231,6 +284,11 @@ cmd_watch() {
         fi
 
         log "scrcpy exited (code $exit_code) — resuming watch"
+        if [[ "$RECORDING" == true ]]; then
+            log "REC recording interrupted: $RECORDING_FILE"
+            RECORDING=false
+            RECORDING_FILE=""
+        fi
         if ! is_device_connected "$DEVICE_SERIAL"; then
             stty -echo 2>/dev/null
             read -t 5 -n 1 key 2>/dev/null || true
