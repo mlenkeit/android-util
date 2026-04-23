@@ -66,6 +66,7 @@ device screen redmi
 device scr redmi          # alias
 
 # Auto-launch scrcpy when device connects (daemon mode)
+# Press [r] in the terminal to start/stop recording
 device watch redmi
 device w redmi            # alias
 device watch              # any device

@@ -3,6 +3,9 @@ set -euo pipefail
 
 DEVICES_FILE=".devices.json"
 SCRCPY_PID=""
+RECORDING=false
+RECORDING_FILE=""
+OLD_STTY=""
 
 log() {
     echo "[$(date '+%H:%M:%S')] $*" >&2
@@ -13,6 +16,7 @@ check_deps() {
     command -v adb >/dev/null || missing+=("adb (Android SDK platform-tools)")
     command -v scrcpy >/dev/null || missing+=("scrcpy (https://github.com/Genymobile/scrcpy)")
     command -v jq >/dev/null || missing+=("jq (https://jqlang.github.io/jq/)")
+    command -v ffmpeg >/dev/null || missing+=("ffmpeg (https://ffmpeg.org/)")
     if [[ ${#missing[@]} -gt 0 ]]; then
         echo "Missing required dependencies:" >&2
         for dep in "${missing[@]}"; do
@@ -25,7 +29,13 @@ check_deps() {
 cleanup() {
     if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
         kill "$SCRCPY_PID" 2>/dev/null
-        wait "$SCRCPY_PID" 2>/dev/null
+        wait "$SCRCPY_PID" 2>/dev/null || true
+    fi
+    if [[ "$RECORDING" == true ]] && [[ -n "$RECORDING_FILE" ]]; then
+        log "REC recording finalized: $RECORDING_FILE"
+    fi
+    if [[ -n "$OLD_STTY" ]]; then
+        stty "$OLD_STTY" 2>/dev/null
     fi
     log "stopped"
     exit 0
@@ -171,11 +181,50 @@ is_device_connected() {
     fi
 }
 
+get_recording_suffix() {
+    if [[ -n "$DEVICE_LOGFILE_SUFFIX" ]]; then
+        echo "$DEVICE_LOGFILE_SUFFIX"
+    else
+        echo "$DEVICE_SERIAL"
+    fi
+}
+
+launch_scrcpy() {
+    local scrcpy_args="$1"
+    local record_args=""
+    if [[ "$RECORDING" == true ]]; then
+        record_args="--record=$RECORDING_FILE"
+    fi
+    # shellcheck disable=SC2086
+    scrcpy -s "$DEVICE_SERIAL" $scrcpy_args $record_args &
+    SCRCPY_PID=$!
+}
+
+stop_scrcpy() {
+    if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
+        kill "$SCRCPY_PID" 2>/dev/null
+        wait "$SCRCPY_PID" 2>/dev/null || true
+    fi
+    SCRCPY_PID=""
+}
+
+convert_to_mp4() {
+    local mkv_file="$1"
+    local mp4_file="${mkv_file%.mkv}.mp4"
+    log "converting to MP4: $mp4_file"
+    if ffmpeg -y -i "$mkv_file" -c copy "$mp4_file" 2>/dev/null; then
+        log "MP4 ready: $mp4_file"
+    else
+        log "MP4 conversion failed for $mkv_file"
+    fi
+}
+
 cmd_watch() {
     local device_arg="${1:-}"
     check_deps
     resolve_device "$device_arg"
 
+    OLD_STTY=$(stty -g)
     trap cleanup INT TERM
 
     local scrcpy_args
@@ -186,30 +235,93 @@ cmd_watch() {
     else
         log "watching for any device"
     fi
+    log "press [r] to start/stop recording"
 
+    local key=""
     while true; do
         if ! is_device_connected "$DEVICE_SERIAL"; then
-            sleep 2
+            stty -echo 2>/dev/null
+            read -t 2 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+            if [[ "$key" == "r" ]] || [[ "$key" == "R" ]]; then
+                log "recording requires an active scrcpy session"
+            fi
+            key=""
             continue
         fi
 
-        log "device $DEVICE_SERIAL connected — launching scrcpy"
+        if [[ "$RECORDING" == true ]]; then
+            log "device $DEVICE_SERIAL connected — launching scrcpy [REC: $RECORDING_FILE]"
+        else
+            log "device $DEVICE_SERIAL connected — launching scrcpy"
+        fi
+        log "press [r] to start/stop recording"
 
         local exit_code=0
-        # shellcheck disable=SC2086
-        scrcpy -s "$DEVICE_SERIAL" $scrcpy_args &
-        SCRCPY_PID=$!
-        wait "$SCRCPY_PID" || exit_code=$?
+        launch_scrcpy "$scrcpy_args"
+
+        while kill -0 "$SCRCPY_PID" 2>/dev/null; do
+            stty -echo 2>/dev/null
+            read -t 1 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+
+            if [[ "$key" == "r" ]] || [[ "$key" == "R" ]]; then
+                while read -t 0.1 -n 1 2>/dev/null; do :; done
+
+                if [[ "$RECORDING" == false ]]; then
+                    local conflict=""
+                    case "$scrcpy_args" in
+                        *--no-video*) conflict="--no-video" ;;
+                        *--v4l2-sink*) conflict="--v4l2-sink" ;;
+                    esac
+                    if [[ -n "$conflict" ]]; then
+                        log "REC cannot record: scrcpy args contain $conflict"
+                    else
+                        log "restarting scrcpy for recording..."
+                        stop_scrcpy
+                        sleep 1
+                        mkdir -p recordings
+                        RECORDING_FILE="recordings/$(date +"%Y-%m-%d_%H-%M-%S")-$(get_recording_suffix).mkv"
+                        RECORDING=true
+                        launch_scrcpy "$scrcpy_args"
+                        log "REC recording started: $RECORDING_FILE"
+                    fi
+                else
+                    log "restarting scrcpy..."
+                    local stopped_file="$RECORDING_FILE"
+                    stop_scrcpy
+                    sleep 1
+                    RECORDING=false
+                    RECORDING_FILE=""
+                    launch_scrcpy "$scrcpy_args"
+                    log "REC recording stopped: $stopped_file"
+                    convert_to_mp4 "$stopped_file"
+                fi
+            fi
+            key=""
+        done
+        wait "$SCRCPY_PID" 2>/dev/null || exit_code=$?
         SCRCPY_PID=""
 
         if [[ $exit_code -eq 0 ]]; then
+            if [[ "$RECORDING" == true ]] && [[ -n "$RECORDING_FILE" ]]; then
+                log "REC recording finalized: $RECORDING_FILE"
+            fi
             log "scrcpy exited normally (user quit)"
             exit 0
         fi
 
         log "scrcpy exited (code $exit_code) — resuming watch"
+        if [[ "$RECORDING" == true ]]; then
+            log "REC recording interrupted: $RECORDING_FILE"
+            RECORDING=false
+            RECORDING_FILE=""
+        fi
         if ! is_device_connected "$DEVICE_SERIAL"; then
-            sleep 5
+            stty -echo 2>/dev/null
+            read -t 5 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+            key=""
         fi
     done
 }
@@ -324,7 +436,7 @@ Usage: device <command> [options]
 
 Commands:
   screen [DEVICE]           Launch scrcpy once (alias: scr)
-  watch  [DEVICE]           Auto-launch scrcpy on device connect (alias: w)
+  watch  [DEVICE]           Auto-launch scrcpy on device connect; press [r] to record (alias: w)
   logs   [DEVICE] [--file]  Stream logcat to terminal or file (alias: log)
   clean  [DEVICE]           Uninstall configured packages from device
   init                      Create .devices.json template in current directory
