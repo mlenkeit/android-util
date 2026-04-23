@@ -27,7 +27,7 @@ check_deps() {
 
 cleanup() {
     if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
-        kill -INT "$SCRCPY_PID" 2>/dev/null
+        kill "$SCRCPY_PID" 2>/dev/null
         wait "$SCRCPY_PID" 2>/dev/null || true
     fi
     if [[ "$RECORDING" == true ]] && [[ -n "$RECORDING_FILE" ]]; then
@@ -201,7 +201,7 @@ launch_scrcpy() {
 
 stop_scrcpy() {
     if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
-        kill -INT "$SCRCPY_PID" 2>/dev/null
+        kill "$SCRCPY_PID" 2>/dev/null
         wait "$SCRCPY_PID" 2>/dev/null || true
     fi
     SCRCPY_PID=""
