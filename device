@@ -3,6 +3,9 @@ set -euo pipefail
 
 DEVICES_FILE=".devices.json"
 SCRCPY_PID=""
+RECORDING=false
+RECORDING_FILE=""
+OLD_STTY=""
 
 log() {
     echo "[$(date '+%H:%M:%S')] $*" >&2
@@ -24,8 +27,11 @@ check_deps() {
 
 cleanup() {
     if [[ -n "$SCRCPY_PID" ]] && kill -0 "$SCRCPY_PID" 2>/dev/null; then
-        kill "$SCRCPY_PID" 2>/dev/null
+        kill -INT "$SCRCPY_PID" 2>/dev/null
         wait "$SCRCPY_PID" 2>/dev/null
+    fi
+    if [[ -n "$OLD_STTY" ]]; then
+        stty "$OLD_STTY" 2>/dev/null
     fi
     log "stopped"
     exit 0
@@ -176,6 +182,7 @@ cmd_watch() {
     check_deps
     resolve_device "$device_arg"
 
+    OLD_STTY=$(stty -g)
     trap cleanup INT TERM
 
     local scrcpy_args
@@ -186,20 +193,36 @@ cmd_watch() {
     else
         log "watching for any device"
     fi
+    log "press [r] to start/stop recording"
 
+    local key=""
     while true; do
         if ! is_device_connected "$DEVICE_SERIAL"; then
-            sleep 2
+            stty -echo 2>/dev/null
+            read -t 2 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+            if [[ "$key" == "r" ]] || [[ "$key" == "R" ]]; then
+                log "recording requires an active scrcpy session"
+            fi
+            key=""
             continue
         fi
 
         log "device $DEVICE_SERIAL connected — launching scrcpy"
+        log "press [r] to start/stop recording"
 
         local exit_code=0
         # shellcheck disable=SC2086
         scrcpy -s "$DEVICE_SERIAL" $scrcpy_args &
         SCRCPY_PID=$!
-        wait "$SCRCPY_PID" || exit_code=$?
+
+        while kill -0 "$SCRCPY_PID" 2>/dev/null; do
+            stty -echo 2>/dev/null
+            read -t 1 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+            key=""
+        done
+        wait "$SCRCPY_PID" 2>/dev/null || exit_code=$?
         SCRCPY_PID=""
 
         if [[ $exit_code -eq 0 ]]; then
@@ -209,7 +232,10 @@ cmd_watch() {
 
         log "scrcpy exited (code $exit_code) — resuming watch"
         if ! is_device_connected "$DEVICE_SERIAL"; then
-            sleep 5
+            stty -echo 2>/dev/null
+            read -t 5 -n 1 key 2>/dev/null || true
+            stty "$OLD_STTY" 2>/dev/null
+            key=""
         fi
     done
 }
