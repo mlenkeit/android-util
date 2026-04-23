@@ -30,6 +30,9 @@ cleanup() {
         kill -INT "$SCRCPY_PID" 2>/dev/null
         wait "$SCRCPY_PID" 2>/dev/null
     fi
+    if [[ "$RECORDING" == true ]] && [[ -n "$RECORDING_FILE" ]]; then
+        log "REC recording finalized: $RECORDING_FILE"
+    fi
     if [[ -n "$OLD_STTY" ]]; then
         stty "$OLD_STTY" 2>/dev/null
     fi
@@ -279,6 +282,9 @@ cmd_watch() {
         SCRCPY_PID=""
 
         if [[ $exit_code -eq 0 ]]; then
+            if [[ "$RECORDING" == true ]] && [[ -n "$RECORDING_FILE" ]]; then
+                log "REC recording finalized: $RECORDING_FILE"
+            fi
             log "scrcpy exited normally (user quit)"
             exit 0
         fi
